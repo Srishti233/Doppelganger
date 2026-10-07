@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Doppelganger</title>
+<style>
+:root{--bg:#0f1115;--fg:#e8eaf0;--mute:#8b90a0;--head:#3a4050;--hair:#1b1e27;--torso:#2a2f3a;--glow:#6c8cff;--card:#181b22}
+@media (prefers-color-scheme:light){:root{--bg:#f3f4f8;--fg:#1b1e27;--mute:#666c7d;--head:#c9cedb;--hair:#8a90a3;--torso:#b4bacb;--card:#fff}}
+html,body{height:100%;margin:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;padding:env(safe-area-inset-top,0) 12px env(safe-area-inset-bottom,0)}
+#badge{font-size:12px;color:var(--mute);padding:8px 0}
+#stage{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;width:100%}
+svg{height:100%;max-height:360px;overflow:visible}
+.glow{fill:var(--glow);opacity:.15;transition:opacity .3s}
+#neck,#headshape{fill:var(--head)} #torso{fill:var(--torso)} #hair{fill:var(--hair)}
+#fig{transform-origin:150px 260px}
+.listening .glow{fill:#4ade80;opacity:.45}
+.thinking #fig{animation:sway 1.2s ease-in-out infinite}
+.thinking .glow{opacity:.35;animation:pulse 1s infinite}
+.speaking #head{animation:nod .5s ease-in-out infinite}
+.speaking .glow{opacity:.55;animation:pulse .5s infinite}
+@keyframes sway{50%{transform:rotate(3deg)}}
+@keyframes nod{50%{transform:translateY(-5px) rotate(-3deg)}}
+@keyframes pulse{50%{opacity:.15}}
+#log{width:100%;max-width:560px;max-height:26vh;overflow-y:auto;font-size:14px;line-height:1.4}
+#log p{margin:4px 0;padding:6px 10px;border-radius:10px;background:var(--card)}
+#log .me{color:var(--mute)}
+#bar{display:flex;gap:8px;width:100%;max-width:560px;padding:10px 0}
+input{flex:1;padding:12px;border-radius:10px;border:1px solid var(--mute);background:var(--card);color:var(--fg);font-size:16px}
+button{padding:0 16px;border-radius:10px;border:0;background:var(--glow);color:#fff;font-size:16px;cursor:pointer}
+button.rec{background:#ef4444}
+</style></head><body>
+<div id="badge">loading...</div>
+<div id="stage" class="idle">
+ <svg viewBox="0 0 300 360" role="img" aria-label="Faceless doppelganger avatar">
+  <ellipse id="glow" class="glow" cx="150" cy="170" rx="130" ry="165"/>
+  <g id="fig">
+   <path id="torso" d="M70 360 Q70 235 150 225 Q230 235 230 360Z"/>
+   <rect id="neck" x="135" y="190" width="30" height="40" rx="10"/>
+   <g id="head"><ellipse id="headshape" cx="150" cy="140" rx="52" ry="62"/>
+    <path id="hair" d="M98 135 Q96 76 150 76 Q204 76 202 135 Q186 104 150 104 Q114 104 98 135Z"/></g>
+  </g>
+ </svg>
+</div>
+<div id="log"></div>
+<div id="bar">
+ <input id="txt" placeholder="Type or press the mic..." autocomplete="off">
+ <button id="mic" title="Speak">🎤</button>
+ <button id="send">Send</button>
+</div>
+<script>
+const $=id=>document.getElementById(id), history=[]; let status={};
+const setState=s=>$('stage').className=s;
+const add=(t,c)=>{const p=document.createElement('p');p.className=c;p.textContent=t;$('log').appendChild(p);$('log').scrollTop=$('log').scrollHeight};
+
+(async()=>{
+  try{status=await(await fetch('/status')).json()}catch(e){}
+  if(status.palette){const r=document.documentElement.style;
+    r.setProperty('--head',status.palette.head);r.setProperty('--hair',status.palette.hair);r.setProperty('--torso',status.palette.body)}
+  $('badge').textContent=`${status.name||'Me'} · voice: ${status.voice?'cloned':'default'} · chats learned: ${status.messages||0}`;
+})();
+
+function browserSpeak(text){
+  if(!('speechSynthesis' in window)){setState('idle');return}
+  const u=new SpeechSynthesisUtterance(text);
+  u.onstart=()=>setState('speaking');u.onend=u.onerror=()=>setState('idle');
+  speechSynthesis.cancel();speechSynthesis.speak(u);
+}
+async function speak(text){
+  if(status.voice){
+    try{
+      const r=await fetch('/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+      if(!r.ok)throw 0;
+      const url=URL.createObjectURL(await r.blob()),a=new Audio(url);
+      const ctx=new(window.AudioContext||window.webkitAudioContext)(),an=ctx.createAnalyser();
+      an.fftSize=256;const src=ctx.createMediaElementSource(a);src.connect(an);an.connect(ctx.destination);
+      const buf=new Uint8Array(an.frequencyBinCount);
+      a.onplay=()=>{setState('speaking-audio');(function loop(){
+        if(a.paused||a.ended)return;an.getByteFrequencyData(buf);
+        const amp=buf.reduce((s,v)=>s+v,0)/buf.length/255;
+        $('head').style.transform=`translateY(${-amp*14}px)`;$('glow').style.opacity=.2+amp*1.2;
+        requestAnimationFrame(loop)})()};
+      a.onended=()=>{setState('idle');$('head').style.transform='';$('glow').style.opacity='';URL.revokeObjectURL(url)};
+      await a.play();return;
+    }catch(e){}
+  }
+  browserSpeak(text);
+}
+async function send(text){
+  text=text.trim();if(!text)return;
+  add(text,'me');history.push({role:'user',content:text});$('txt').value='';setState('thinking');
+  try{
+    const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history})});
+    const d=await r.json();if(d.error)throw new Error(d.error);
+    history.push({role:'assistant',content:d.reply});add(d.reply,'ai');speak(d.reply);
+  }catch(e){history.pop();add('Error: '+e.message,'ai');setState('idle')}
+}
+$('send').onclick=()=>send($('txt').value);
+$('txt').onkeydown=e=>{if(e.key==='Enter')send($('txt').value)};
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition,mic=$('mic');
+if(!SR){mic.style.display='none'}else{
+  const rec=new SR();rec.lang=navigator.language||'en-US';rec.interimResults=false;
+  rec.onstart=()=>{setState('listening');mic.classList.add('rec')};
+  rec.onend=()=>{mic.classList.remove('rec');if($('stage').className==='listening')setState('idle')};
+  rec.onresult=e=>send(e.results[0][0].transcript);
+  mic.onclick=()=>{speechSynthesis.cancel();try{rec.start()}catch(_){rec.stop()}};
+}
+</script></body></html>

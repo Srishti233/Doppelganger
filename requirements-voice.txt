@@ -1,0 +1,3 @@
+# Optional: local voice cloning (Coqui XTTS v2). GPU strongly recommended.
+# Note: XTTS model weights are licensed for non-commercial use (Coqui CPML).
+coqui-tts
